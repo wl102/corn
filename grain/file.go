@@ -10,7 +10,7 @@ type DBFile struct {
 }
 
 func OpenFile(filename string) (*DBFile, error) {
-	f, err := os.OpenFile(filename, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0666)
+	f, err := os.OpenFile(filename, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
 	if err != nil {
 		return nil, err
 	}
@@ -24,7 +24,7 @@ func (f *DBFile) Read(offset int64, buf []byte) (int, error) {
 }
 
 func (f *DBFile) Write(offset int64, buf []byte) (int, error) {
-	n, err := f.File.WriteAt(buf, offset)
+	n, err := f.File.Write(buf)
 	if err != nil {
 		return 0, err
 	}

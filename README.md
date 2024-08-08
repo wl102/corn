@@ -1,4 +1,4 @@
-# description
+# Description
 a simple k-v database with bitcask model
 
 # Feature
