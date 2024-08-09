@@ -3,9 +3,11 @@ package grain
 import (
 	"errors"
 	"io"
+	"io/fs"
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -141,7 +143,7 @@ func (c *Corn) Fold() error {
 		}
 		off += int64(24 + g.KSize + g.VSize)
 
-		for err != io.EOF && n > 0 {
+		for n > 0 {
 			n, err = readRecord(v, off, b)
 			if err != nil {
 				return nil
@@ -182,4 +184,100 @@ func (c *Corn) List() (keys []string) {
 		keys = append(keys, k)
 	}
 	return
+}
+
+func (c *Corn) Merge(dir string) error {
+	var (
+		g Grain
+		h Hint
+		b []byte = make([]byte, 512)
+	)
+	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if !d.IsDir() && filepath.Ext(path) == ".db" {
+			src, err := os.Open(path)
+			if err != nil {
+				return err
+			}
+			defer src.Close()
+			// merge operation
+			// ...
+			dir, name := filepath.Split(path)
+			name = strings.TrimRight(name, ".db ")
+			dst, err := os.OpenFile(dir+name+".archive", os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
+			if err != nil {
+				return err
+			}
+			hint, err := os.OpenFile(dir+name+".hint", os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
+			if err != nil {
+				return err
+			}
+			defer hint.Close()
+			defer dst.Close()
+			//
+			var off, doff int64 = 0, 0
+			v := &DBFile{File: src}
+			n, err := readRecord(v, off, b)
+			if err != nil && err != io.EOF {
+				return nil
+			}
+			Decode(&g, b)
+			h.Offset = doff
+			h.TimeStamp = g.TimeStamp
+			h.KSize = g.KSize
+			h.Key = g.Key
+			hbytes, err := HintEncode(&h)
+			if err != nil {
+				return err
+			}
+			if _, ok := c.Offsets[string(g.Key)]; ok {
+				dst.Write(b[:n])
+				hint.Write(hbytes)
+			}
+			off += int64(24 + g.KSize + g.VSize)
+			doff += int64(len(hbytes))
+
+			for n > 0 {
+				n, err = readRecord(v, off, b)
+				if err != nil && err != io.EOF {
+					return nil
+				}
+				Decode(&g, b)
+				h.Offset = doff
+				h.TimeStamp = g.TimeStamp
+				h.KSize = g.KSize
+				h.Key = g.Key
+				hbytes, err := HintEncode(&h)
+				if err != nil {
+					return err
+				}
+				if _, ok := c.Offsets[string(g.Key)]; ok {
+					dst.Write(b[:n])
+					hint.Write(hbytes)
+				}
+				off += int64(24 + g.KSize + g.VSize)
+				doff += int64(len(hbytes))
+			}
+		}
+		return nil
+	})
+	return err
+}
+
+func (c *Corn) Sync() error {
+	for _, v := range c.Files {
+		err := v.File.Sync()
+		if err != nil {
+			return nil
+		}
+	}
+	return nil
+}
+
+func (c *Corn) Close() error {
+	for _, v := range c.Files {
+		if err := v.File.Close(); err != nil {
+			return err
+		}
+	}
+	return nil
 }

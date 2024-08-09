@@ -41,4 +41,9 @@ func main() {
 		fmt.Println(v)
 	}
 	fmt.Println(corn.List())
+
+	err = corn.Merge("./")
+	if err != nil {
+		log.Fatalln(err)
+	}
 }
