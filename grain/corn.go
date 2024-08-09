@@ -2,6 +2,7 @@ package grain
 
 import (
 	"errors"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -14,8 +15,8 @@ type KeyPath struct {
 }
 
 type Corn struct {
-	Files   map[string]*DBFile
-	Offsets map[string]*KeyPath
+	Files   map[string]*DBFile  //filename-fd
+	Offsets map[string]*KeyPath //key-offset
 }
 
 func OpenDB(names ...string) *Corn {
@@ -39,6 +40,10 @@ func OpenDB(names ...string) *Corn {
 
 	// init offests when open db
 	// ...
+	err := corn.Fold()
+	if err != nil {
+		log.Fatalf("when init mem index failed :%d\n", err)
+	}
 	return &corn
 }
 
@@ -104,4 +109,77 @@ func (c *Corn) Put(filename, key, val string) error {
 	}
 	f.Offset += int64(n)
 	return nil
+}
+
+func (c *Corn) Delete(key string) error {
+	kp, ok := c.Offsets[key]
+	if !ok {
+		return errors.New("key is not exsist")
+	}
+	err := c.Put(kp.FileName, key, "")
+	delete(c.Offsets, key)
+	return err
+}
+
+func (c *Corn) Fold() error {
+	var (
+		off int64
+	)
+	g := Grain{}
+	b := make([]byte, 512)
+	for k, v := range c.Files {
+		n, err := readRecord(v, off, b)
+		if err != nil {
+			return nil
+		}
+		Decode(&g, b)
+		if g.VSize > 0 {
+			c.Offsets[string(g.Key)] = &KeyPath{
+				FileName: k,
+				Offset:   off,
+			}
+		}
+		off += int64(24 + g.KSize + g.VSize)
+
+		for err != io.EOF && n > 0 {
+			n, err = readRecord(v, off, b)
+			if err != nil {
+				return nil
+			}
+			Decode(&g, b)
+			if g.VSize > 0 {
+				c.Offsets[string(g.Key)] = &KeyPath{
+					FileName: k,
+					Offset:   off,
+				}
+			}
+			off += int64(24 + g.KSize + g.VSize)
+		}
+	}
+	return nil
+}
+
+func readRecord(f *DBFile, off int64, b []byte) (n int, err error) {
+	n, err = f.Read(off, b)
+	if err != nil {
+		log.Printf("%d,%s\n", n, err)
+		return
+	}
+	gh, err := DecodeHeader(b)
+	if err != nil {
+		return
+	}
+	if int(24+gh.KSize+gh.VSize) <= len(b) {
+		return
+	} else {
+		err = errors.New("no enough space read hole record")
+	}
+	return
+}
+
+func (c *Corn) List() (keys []string) {
+	for k := range c.Offsets {
+		keys = append(keys, k)
+	}
+	return
 }

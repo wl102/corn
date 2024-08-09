@@ -1,7 +1,7 @@
 package grain
 
 import (
-	"fmt"
+	"reflect"
 	"testing"
 	"time"
 )
@@ -19,12 +19,12 @@ func TestEncodeAndDecode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fmt.Println(b)
 	var g1 Grain
 	err = Decode(&g1, b)
 	if err != nil {
 		t.Fatal(err)
 	}
-	fmt.Printf("Offset:%d\nTimeStamp:%s\nKSize:%d\nVSize:%d\nKey:%s\nVal:%s\n",
-		g1.Offset, time.Unix(g1.TimeStamp, 0), g1.KSize, g1.VSize, g1.Key, g1.Val)
+	if !reflect.DeepEqual(g, g1) {
+		t.Error("decode not encode data\n")
+	}
 }

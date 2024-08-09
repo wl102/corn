@@ -38,7 +38,7 @@ func Decode(g *Grain, b []byte) error {
 }
 
 func DecodeHeader(b []byte) (Grain, error) {
-	if len(b) != 24 {
+	if len(b) < 24 {
 		return Grain{}, errors.New("invalid header")
 	}
 	var g Grain

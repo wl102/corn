@@ -25,4 +25,20 @@ func main() {
 	} else {
 		fmt.Println(v)
 	}
+	err = corn.Put(name, "wang1", "zhen1")
+	if err != nil {
+		log.Println(err)
+	}
+	fmt.Println(corn.List())
+	err = corn.Delete("wang")
+	if err != nil {
+		log.Println(err)
+	}
+	v, err = corn.Get("wang")
+	if err != nil {
+		log.Println(err)
+	} else {
+		fmt.Println(v)
+	}
+	fmt.Println(corn.List())
 }
