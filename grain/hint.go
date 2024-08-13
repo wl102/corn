@@ -1,6 +1,9 @@
 package grain
 
-import "encoding/binary"
+import (
+	"encoding/binary"
+	"errors"
+)
 
 type Hint struct {
 	Offset    int64  //8
@@ -25,4 +28,15 @@ func HintDecode(h *Hint, b []byte) error {
 	h.Key = make([]byte, h.KSize)
 	copy(h.Key, b[20:20+h.KSize])
 	return nil
+}
+
+func HintHeader(b []byte) (Hint, error) {
+	if len(b) < 20 {
+		return Hint{}, errors.New("invalid header")
+	}
+	var h Hint
+	h.Offset = int64(binary.BigEndian.Uint64(b[:8]))
+	h.TimeStamp = int64(binary.BigEndian.Uint64(b[8:16]))
+	h.KSize = binary.BigEndian.Uint32(b[16:20])
+	return h, nil
 }
