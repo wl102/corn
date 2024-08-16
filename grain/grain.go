@@ -48,3 +48,18 @@ func DecodeHeader(b []byte) (Grain, error) {
 	g.VSize = binary.BigEndian.Uint32(b[20:24])
 	return g, nil
 }
+
+func (g *Grain) Decode(b []byte) (HeaderInfo, error) {
+	var hi HeaderInfo
+	if len(b) < 24 {
+		return hi, errors.New("invalid header")
+	}
+	g.Offset = int64(binary.BigEndian.Uint64(b[:8]))
+	g.TimeStamp = int64(binary.BigEndian.Uint64(b[8:16]))
+	g.KSize = binary.BigEndian.Uint32(b[16:20])
+	g.VSize = binary.BigEndian.Uint32(b[20:24])
+
+	hi.Offset = g.Offset
+	hi.Total = 24 + g.KSize + g.VSize
+	return hi, nil
+}

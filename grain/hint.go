@@ -40,3 +40,17 @@ func HintHeader(b []byte) (Hint, error) {
 	h.KSize = binary.BigEndian.Uint32(b[16:20])
 	return h, nil
 }
+
+func (h *Hint) Decode(b []byte) (HeaderInfo, error) {
+	var hi HeaderInfo
+	if len(b) < 20 {
+		return hi, errors.New("invalid header")
+	}
+	h.Offset = int64(binary.BigEndian.Uint64(b[:8]))
+	h.TimeStamp = int64(binary.BigEndian.Uint64(b[8:16]))
+	h.KSize = binary.BigEndian.Uint32(b[16:20])
+	hi.Offset = h.Offset
+	hi.Total = 20 + h.KSize
+
+	return hi, nil
+}

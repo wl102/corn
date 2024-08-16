@@ -26,6 +26,14 @@ type Corn struct {
 	bytesPool, readPool sync.Pool
 }
 
+type HeaderInfo struct {
+	Offset int64
+	Total  uint32
+}
+type HeaderDecoder interface {
+	Decode(b []byte) (HeaderInfo, error)
+}
+
 func Open(dir string) (*Corn, error) {
 	var (
 		corn = Corn{
@@ -49,7 +57,7 @@ func Open(dir string) (*Corn, error) {
 		if err != nil {
 			return nil, err
 		}
-		filePath := filepath.Join(dir, node.Generate().String(), ".data")
+		filePath := filepath.Join(dir, node.Generate().String()+".data")
 
 		// 创建文件
 		f, err := os.OpenFile(filePath, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0644)
@@ -185,7 +193,7 @@ func (c *Corn) Fold(dir string) error {
 		name := strings.TrimSuffix(filename, filepath.Ext(filename))
 
 		// 检查对应的.hint文件是否存在
-		hintPath := filepath.Join(filepath.Dir(path), name, ".hint")
+		hintPath := filepath.Join(filepath.Dir(path), name+".hint")
 		if _, err := os.Stat(hintPath); os.IsNotExist(err) {
 			return c.foldDataFile(path, filename)
 		}
@@ -398,18 +406,12 @@ func (c *Corn) Merge(dir string) error {
 }
 
 func (c *Corn) Sync() error {
-	for _, v := range c.Files {
-		err := v.File.Sync()
-		if err != nil {
-			return nil
-		}
-	}
-	return nil
+	return c.ActiveFile.Sync()
 }
 
 func (c *Corn) Close() error {
-	for _, v := range c.Files {
-		if err := v.File.Close(); err != nil {
+	for _, f := range c.Files {
+		if err := f.Close(); err != nil {
 			return err
 		}
 	}

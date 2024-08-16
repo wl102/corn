@@ -30,3 +30,11 @@ func (f *DBFile) Write(offset int64, buf []byte) (int, error) {
 	}
 	return n, nil
 }
+
+func (f *DBFile) Sync() error {
+	return f.File.Sync()
+}
+
+func (f *DBFile) Close() error {
+	return f.File.Close()
+}
