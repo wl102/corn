@@ -8,7 +8,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
+
+	"github.com/bwmarrin/snowflake"
 )
 
 type KeyPath struct {
@@ -17,14 +20,56 @@ type KeyPath struct {
 }
 
 type Corn struct {
-	Files   map[string]*DBFile  //filename-fd
-	Offsets map[string]*KeyPath //key-offset
+	ActiveFile          *DBFile
+	Files               map[string]*DBFile  //filename-fd
+	Index               map[string]*KeyPath //key-offset
+	bytesPool, readPool sync.Pool
+}
+
+func Open(dir string) (*Corn, error) {
+	var (
+		corn = Corn{
+			ActiveFile: nil,
+			Files:      make(map[string]*DBFile),
+			Index:      make(map[string]*KeyPath),
+			bytesPool:  sync.Pool{New: newHeaderBuf},
+			readPool:   sync.Pool{New: newReadBuf},
+		}
+	)
+
+	// 检查目录是否存在
+	if _, err := os.Stat(dir); os.IsNotExist(err) {
+		// 如果目录不存在，创建目录
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return nil, err
+		}
+
+		// 生成唯一的文件名
+		node, err := snowflake.NewNode(1)
+		if err != nil {
+			return nil, err
+		}
+		filePath := filepath.Join(dir, node.Generate().String(), ".data")
+
+		// 创建文件
+		f, err := os.OpenFile(filePath, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0644)
+		if err != nil {
+			return nil, err
+		}
+		corn.ActiveFile = &DBFile{File: f}
+	} else {
+		// 如果目录存在，进行 Fold 操作
+		if err := corn.Fold(dir); err != nil {
+			return nil, err
+		}
+	}
+	return &corn, nil
 }
 
 func OpenDB(names ...string) *Corn {
 	var corn Corn = Corn{
-		Files:   make(map[string]*DBFile),
-		Offsets: make(map[string]*KeyPath),
+		Files: make(map[string]*DBFile),
+		Index: make(map[string]*KeyPath),
 	}
 	for i := range names {
 		f, err := OpenFile(names[i])
@@ -55,7 +100,7 @@ func (c *Corn) Get(key string) (string, error) {
 		ok bool
 		g  Grain
 	)
-	kp, ok = c.Offsets[key]
+	kp, ok = c.Index[key]
 	if !ok {
 		return "", nil
 	}
@@ -105,7 +150,7 @@ func (c *Corn) Put(filename, key, val string) error {
 	if err != nil {
 		return err
 	}
-	c.Offsets[key] = &KeyPath{
+	c.Index[key] = &KeyPath{
 		FileName: filename,
 		Offset:   f.Offset,
 	}
@@ -114,77 +159,79 @@ func (c *Corn) Put(filename, key, val string) error {
 }
 
 func (c *Corn) Delete(key string) error {
-	kp, ok := c.Offsets[key]
+	kp, ok := c.Index[key]
 	if !ok {
 		return errors.New("key is not exsist")
 	}
 	err := c.Put(kp.FileName, key, "")
-	delete(c.Offsets, key)
+	delete(c.Index, key)
 	return err
 }
 
 func (c *Corn) Fold(dir string) error {
 	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
-		fpath := filepath.Base(dir)
-		if !d.IsDir() {
-			if filepath.Ext(path) == ".db" {
-				path2 := strings.Replace(path, ".db", ".hint", -1)
-				_, err := os.Stat(path2)
-				if err != nil {
-					f, err := os.Open(path)
-					if err != nil {
-						return err
-					}
-					c.foldDBFile(fpath, &DBFile{
-						File: f,
-					})
-				} else {
-					return nil
-				}
-			}
-			if filepath.Ext(path) == ".hint" {
-				f, err := os.Open(path)
-				if err != nil {
-					return err
-				}
-				c.foldHintFile(fpath, &DBFile{
-					File: f,
-				})
-			}
+		if err != nil {
+			return err // 如果在访问目录时出错，直接返回错误
 		}
-		return nil
+		if d.IsDir() {
+			return nil // 如果是目录，跳过
+		}
+
+		if filepath.Ext(path) != ".data" {
+			return nil // 如果不是.data文件，跳过
+		}
+
+		filename := filepath.Base(path)
+		name := strings.TrimSuffix(filename, filepath.Ext(filename))
+
+		// 检查对应的.hint文件是否存在
+		hintPath := filepath.Join(filepath.Dir(path), name, ".hint")
+		if _, err := os.Stat(hintPath); os.IsNotExist(err) {
+			return c.foldDataFile(path, filename)
+		}
+		return c.foldHintFile(hintPath, filename)
 	})
+
 	return err
 }
-func (c *Corn) foldDBFile(k string, v *DBFile) error {
+
+func (c *Corn) foldDataFile(path, filename string) error {
 	var (
-		off int64
-		g   Grain
-		b   = make([]byte, 512)
+		off    int64
+		g      Grain
+		b      = make([]byte, 512)
+		dbfile DBFile
 	)
-	c.Files[k] = v
-	n, err := readRecord(v, off, b)
+	file, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	dbfile.File = file
+	c.Files[filename] = &dbfile
+
+	// 开始迭代键-值
+	n, err := readRecord(&dbfile, off, b)
 	if err != nil {
 		return nil
 	}
 	Decode(&g, b[:n])
 	if g.VSize > 0 {
-		c.Offsets[string(g.Key)] = &KeyPath{
-			FileName: k,
+		c.Index[string(g.Key)] = &KeyPath{
+			FileName: filename,
 			Offset:   off,
 		}
 	}
 	off += int64(24 + g.KSize + g.VSize)
 
 	for n > 0 {
-		n, err = readRecord(v, off, b)
+		n, err = readRecord(&dbfile, off, b)
 		if err != nil {
 			return nil
 		}
 		Decode(&g, b)
 		if g.VSize > 0 {
-			c.Offsets[string(g.Key)] = &KeyPath{
-				FileName: k,
+			c.Index[string(g.Key)] = &KeyPath{
+				FileName: filename,
 				Offset:   off,
 			}
 		}
@@ -193,32 +240,38 @@ func (c *Corn) foldDBFile(k string, v *DBFile) error {
 	return nil
 }
 
-func (c *Corn) foldHintFile(k string, v *DBFile) error {
+func (c *Corn) foldHintFile(path, filename string) error {
 	var (
-		off int64
-		g   Hint
-		b   = make([]byte, 512)
+		off    int64
+		g      Hint
+		b      = make([]byte, 512)
+		dbfile DBFile
 	)
-	c.Files[k] = v
-	n, err := readHint(v, off, b)
+	file, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	dbfile.File = file
+	c.Files[filename] = &dbfile
+	n, err := readHint(&dbfile, off, b)
 	if err != nil {
 		return err
 	}
 	HintDecode(&g, b[:n])
-	c.Offsets[string(g.Key)] = &KeyPath{
-		FileName: k,
+	c.Index[string(g.Key)] = &KeyPath{
+		FileName: filename,
 		Offset:   off,
 	}
 
 	off += int64(20 + g.KSize)
 	for n > 0 {
-		n, err = readHint(v, off, b)
+		n, err = readHint(&dbfile, off, b)
 		if err != nil {
 			return err
 		}
 		HintDecode(&g, b)
-		c.Offsets[string(g.Key)] = &KeyPath{
-			FileName: k,
+		c.Index[string(g.Key)] = &KeyPath{
+			FileName: filename,
 			Offset:   off,
 		}
 		off += int64(20 + g.KSize)
@@ -261,7 +314,7 @@ func readHint(f *DBFile, off int64, b []byte) (n int, err error) {
 }
 
 func (c *Corn) List() (keys []string) {
-	for k := range c.Offsets {
+	for k := range c.Index {
 		keys = append(keys, k)
 	}
 	return
@@ -310,7 +363,7 @@ func (c *Corn) Merge(dir string) error {
 			if err != nil {
 				return err
 			}
-			if kp, ok := c.Offsets[string(g.Key)]; ok && kp.Offset == g.Offset {
+			if kp, ok := c.Index[string(g.Key)]; ok && kp.Offset == g.Offset {
 				dst.Write(b[:n])
 				hint.Write(hbytes)
 			}
@@ -331,7 +384,7 @@ func (c *Corn) Merge(dir string) error {
 				if err != nil {
 					return err
 				}
-				if kp, ok := c.Offsets[string(g.Key)]; ok && kp.Offset == g.Offset {
+				if kp, ok := c.Index[string(g.Key)]; ok && kp.Offset == g.Offset {
 					dst.Write(b[:n])
 					hint.Write(hbytes)
 				}
