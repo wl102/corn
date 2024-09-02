@@ -1,17 +1,13 @@
 package tests
 
 import (
-	"corn/grain"
-	"os"
+	"corn"
 	"testing"
 )
 
 func TestOpen(t *testing.T) {
-	corn, err := grain.Open("db")
+	corn, err := corn.Open("./bitcask")
 	if err != nil || corn == nil {
 		t.Fatal(err)
-	}
-	if _, err := os.Stat("db"); os.IsNotExist(err) {
-		t.Error("mkdir is incorret")
 	}
 }

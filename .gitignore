@@ -1,4 +1,5 @@
 *.prof
 *.test
-*.db
+*.data
 *.hint
+main
