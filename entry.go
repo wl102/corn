@@ -28,6 +28,10 @@ func Marshal(e *entry) []byte {
 	return b
 }
 
+func PutCRC(data []byte, crc uint32) {
+	binary.BigEndian.PutUint32(data[:4], crc)
+}
+
 func UnMarshal(b []byte, e *entry) error {
 
 	return nil

@@ -75,6 +75,11 @@ func (c *Corn) Put(key, value string, ttl uint32) error {
 		value:  []byte(value),
 	}
 	entry := Marshal(e)
+	crc, err := CRC32(entry[4:])
+	if err != nil {
+		return err
+	}
+	PutCRC(entry, crc)
 	_, err = c.NewFile.Write(entry)
 	if err != nil {
 		return err
