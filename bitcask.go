@@ -115,7 +115,16 @@ func (c *Corn) ListKeys() []string {
 	return keys
 }
 
-func (c *Corn) Fold() {}
+func (c *Corn) Fold(f func(key string) error) error {
+	var err error
+	for key := range c.Index {
+		err = f(key)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
 func (c *Corn) Merge() {}
 
